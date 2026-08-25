@@ -77,6 +77,10 @@
     width:100%;margin-top:22px;padding:18px;font-size:20px;font-weight:800;
     color:#fff;background:var(--green);border:none;border-radius:16px;cursor:pointer;
   }
+  .setup button.clearbtn{
+    background:#fff;color:#b3261e;border:2px solid #e6b7b3;
+    margin-top:28px;font-size:17px;font-weight:700;
+  }
   .setup .note{font-size:14px;color:#8a97a3;margin-top:10px;line-height:1.7}
   .msg{margin-top:14px;font-size:16px;font-weight:700}
   .hide{display:none}
@@ -112,7 +116,7 @@
     <div class="hist" id="hist"></div>
 
     <div class="foot">
-      みまもり v1.0 ・ <a id="toSetup">設定</a>
+      みまもり v1.1 ・ <a id="toSetup">設定</a>
     </div>
   </div>
 
@@ -142,6 +146,13 @@
       ※ URLはこのスマホの中だけに保存されます。どこにも送られません。<br>
       ※ 末尾が <b>/exec</b> になっているか確かめてください。<b>/dev</b> だと本人以外は使えません。
     </p>
+
+    <button id="clear" class="clearbtn hide">この端末の設定を消す</button>
+    <p class="note">
+      押す端末は<b>1台だけ</b>にしてください。ほかの端末から押せると、
+      ご本人が押していない日でも「元気」として記録され、お知らせが止まってしまいます。<br>
+      端末を替えるときや、確認用に入れた設定を片づけるときは、上のボタンで消してください。
+    </p>
     <div class="foot" style="text-align:left">
       <a id="backMain">← 戻る</a>
     </div>
@@ -155,7 +166,7 @@
 // 記録・判定・メール送信はすべてGoogle側（GAS）が行います。
 // この画面は「押したことを伝える」「いまの状態を見せる」だけです。
 // ============================================================
-var VERSION = 'v1.0';
+var VERSION = 'v1.1';
 var KEY_URL = 'mimamori_url';
 var KEY_PREF = 'mimamori_pref';
 
@@ -319,8 +330,15 @@ function buildPrefSelect(){
 function openSetup(){
   buildPrefSelect();
   $('url').value = getUrl();
+  refreshClearBtn();
   $('main').classList.add('hide');
   $('setup').classList.remove('hide');
+}
+
+// 「消す」ボタンは、設定が入っているときだけ見せる
+function refreshClearBtn(){
+  if (getUrl()) $('clear').classList.remove('hide');
+  else          $('clear').classList.add('hide');
 }
 
 function openMain(){
@@ -366,7 +384,20 @@ document.addEventListener('DOMContentLoaded', function(){
     localStorage.setItem(KEY_PREF, $('pref').value);
     $('setupMsg').style.color = '#1f9d63';
     $('setupMsg').textContent = '保存しました ✓';
+    refreshClearBtn();
     setTimeout(openMain, 500);
+  });
+
+  $('clear').addEventListener('click', function(){
+    if (!confirm('この端末に保存したURLを消します。\n'
+               + 'この端末からは「元気です」を押せなくなります。\n\n'
+               + '消してよろしいですか？')) return;
+    localStorage.removeItem(KEY_URL);
+    localStorage.removeItem(KEY_PREF);
+    $('url').value = '';
+    $('setupMsg').style.color = '#5b6b7a';
+    $('setupMsg').textContent = 'この端末の設定を消しました。';
+    refreshClearBtn();
   });
 
   if (getUrl()) openMain(); else openSetup();

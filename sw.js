@@ -8,7 +8,7 @@
  *   ぜったいにためません。古い情報を「きょうの結果」として見せてしまうと、
  *   見守りアプリとしては危険だからです。かならず毎回とりに行きます。
  */
-var CACHE = 'mimamori-v1.0';
+var CACHE = 'mimamori-v1.1';
 var SHELL = [
   './',
   './index.html',
