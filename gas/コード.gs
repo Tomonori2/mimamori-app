@@ -14,7 +14,7 @@
  *   だから毎日の報告は、面倒でも切らないでください。
  */
 
-var VERSION = 'v1.0';
+var VERSION = 'v1.1';
 
 // 体調の3択。キーと、画面やメールに出す言葉の対応表。
 var MOODS = {
@@ -38,7 +38,26 @@ function onOpen() {
     .addItem('① 初期設定（最初に1回だけ）', 'setup')
     .addItem('② テスト通知を送ってみる', 'testAlert')
     .addItem('③ いまの状態を見る', 'showStatus')
+    .addItem('④ きょうの記録をリセット（テスト用）', 'resetToday')
     .addToUi();
+}
+
+/** テスト用。「まだ何も押していない」状態に戻す。
+ *  「内部データ」シートを手で消すより安全で確実。 */
+function resetToday() {
+  var ui = SpreadsheetApp.getUi();
+  var ans = ui.alert(
+    'きょうの記録（押した・知らせた）を消して、まだ何もしていない状態に戻します。\n\nよろしいですか？',
+    ui.ButtonSet.OK_CANCEL);
+  if (ans !== ui.Button.OK) return;
+
+  ['last_checkin', 'alert_date', 'clear_date', 'report_date', 'today_mood']
+    .forEach(function (k) { setState_(k, ''); });
+
+  ui.alert('きょうの記録を消しました。\n\n'
+    + '「設定」シートの締め切り時刻を、いまより前の時刻にすると、\n'
+    + '15分以内に「合図がありません」が届きます。\n'
+    + '確かめたら、締め切り時刻を元に戻してください。');
 }
 
 
@@ -95,18 +114,41 @@ function checkDeadline() {
   var now = new Date();
   var today = ymd_(now);
 
-  // 締め切り時刻（例 "10:00"）を、きょうの日時に直す
-  var hm = String(s.deadline || '10:00').split(':');
-  var deadline = new Date(now);
-  deadline.setHours(Number(hm[0]) || 10, Number(hm[1]) || 0, 0, 0);
+  // ★「きょうの日付」も「いまの時刻」も、かならずスプレッドシートの時計で見る。
+  //   以前は new Date().setHours() で締め切りを作っていたが、それは
+  //   Apps Script側の時計で動くので、2つの設定がずれていると
+  //   日付と時刻でちがう時計を混ぜることになる。
+  //   いまは両方を同じ HH:mm の文字にそろえて比べているので、その心配がない。
+  var nowHM = Utilities.formatDate(now, tz_(), 'HH:mm');
 
-  var lastCheckin = getState_('last_checkin');
-  var checkedToday = lastCheckin && lastCheckin.slice(0, 10) === today;
+  var checkedToday = (stateDate_('last_checkin') === today);
 
-  if (now >= deadline && !checkedToday && getState_('alert_date') !== today) {
+  if (nowHM >= s.deadline && !checkedToday
+      && stateDate_('alert_date') !== today && !alertSentToday_(today)) {
     doAlert_(s);
     setState_('alert_date', today);
   }
+}
+
+
+/** きょうすでに「合図がありません」を送っていないか、送信ログでも確かめる。
+ *  内部データの保存がなにかの理由で失敗しても、
+ *  同じ通知を何度も送りつけることだけは起こさないための保険。
+ *  （一度これで失敗しているので、二重に見張っている） */
+function alertSentToday_(today) {
+  var sh = sheet_(SHEET_MAILLOG);
+  var last = sh.getLastRow();
+  if (last < 2) return false;
+
+  var from = Math.max(2, last - 30);       // 直近30件だけ見れば十分
+  var rows = sh.getRange(from, 1, last - from + 1, 3).getValues();
+  for (var i = 0; i < rows.length; i++) {
+    var d = rows[i][0];
+    d = (d instanceof Date) ? Utilities.formatDate(d, tz_(), 'yyyy-MM-dd')
+                            : String(d).slice(0, 10);
+    if (d === today && String(rows[i][2]).indexOf('合図がありません') >= 0) return true;
+  }
+  return false;
 }
 
 
@@ -141,7 +183,6 @@ function doPost(e) {
 function status_() {
   var s = getSettings_();
   var today = ymd_(new Date());
-  var last = getState_('last_checkin');
   return {
     ok: true,
     version: VERSION,
@@ -149,7 +190,7 @@ function status_() {
     deadline: s.deadline,
     region: s.region,
     heat_alert: s.heat_alert,
-    checked_today: !!(last && last.slice(0, 10) === today),
+    checked_today: (stateDate_('last_checkin') === today),
     today_mood: getState_('today_mood'),
     history: recentRows_(7)
   };
@@ -168,12 +209,12 @@ function checkin_(mood) {
 
   // どのメールを出すかを決める（今までのPython版と同じ判断です）
   if (s.contact_email) {
-    if (getState_('alert_date') === today && getState_('clear_date') !== today) {
+    if (stateDate_('alert_date') === today && stateDate_('clear_date') !== today) {
       // すでに「合図がありません」を送ったあとに押された → 無事を伝える
       doAllClear_(s, now);
       setState_('clear_date', today);
       setState_('report_date', today);   // この日の報告は済んだ扱い
-    } else if (s.daily_report && getState_('report_date') !== today) {
+    } else if (s.daily_report && stateDate_('report_date') !== today) {
       // その日はじめての合図 → 毎日の報告
       doDailyReport_(s, now, mood);
       setState_('report_date', today);
@@ -339,10 +380,14 @@ function getSettings_() {
   var v = {};
   rows.forEach(function (r) { v[String(r[0]).trim()] = r[1]; });
 
-  // 締め切り時刻は、手で「10:00」と書いても、時刻として入力されても読めるようにする
+  // 締め切り時刻は、手で「10:00」と書いても、時刻として入力されても読めるようにする。
+  // さらに「9:00」のような1桁の書き方を「09:00」にそろえる。
+  // そろえないと文字として比べたときに 9:00 > 10:00 と判定されてしまう。
   var dl = v['締め切り時刻'];
   if (dl instanceof Date) dl = Utilities.formatDate(dl, tz_(), 'HH:mm');
   dl = String(dl || '10:00').trim();
+  var hm = dl.match(/^(\d{1,2}):(\d{2})/);
+  dl = hm ? ('0' + hm[1]).slice(-2) + ':' + hm[2] : '10:00';
 
   return {
     name: String(v['見守る方のお名前'] || '').trim(),
@@ -359,24 +404,44 @@ function getState_(key) {
   if (sh.getLastRow() === 0) return '';
   var rows = sh.getRange(1, 1, sh.getLastRow(), 2).getValues();
   for (var i = 0; i < rows.length; i++) {
-    if (String(rows[i][0]) === key) return String(rows[i][1] || '');
+    if (String(rows[i][0]) === key) {
+      var v = rows[i][1];
+      // 古い版が「日付データ」として保存してしまった分を、文字にそろえ直す。
+      if (v instanceof Date) return Utilities.formatDate(v, tz_(), "yyyy-MM-dd'T'HH:mm:ss");
+      return String(v || '');
+    }
   }
   return '';
+}
+
+/** 内部データの日付を、かならず「yyyy-MM-dd」の10文字にそろえて取り出す。
+ *  保存の形がぶれても比較が壊れないようにするための入口。 */
+function stateDate_(key) {
+  return String(getState_(key) || '').slice(0, 10);
 }
 
 function setState_(key, value) {
   var sh = sheet_(SHEET_STATE);
   var last = sh.getLastRow();
+  var row = 0;
+
   if (last > 0) {
     var rows = sh.getRange(1, 1, last, 1).getValues();
     for (var i = 0; i < rows.length; i++) {
-      if (String(rows[i][0]) === key) {
-        sh.getRange(i + 1, 2).setValue(value);
-        return;
-      }
+      if (String(rows[i][0]) === key) { row = i + 1; break; }
     }
   }
-  sh.appendRow([key, value]);
+  if (!row) {
+    row = last + 1;
+    sh.getRange(row, 1).setValue(key);
+  }
+
+  // ★「@」＝文字として扱う書式。これを付けないと、"2026-08-25" のような文字列を
+  //   スプレッドシートが日付データに変換してしまい、読み返したとき別の形になる。
+  //   その結果「きょうはもう知らせた」の記録が一致せず、15分ごとに通知が出続けた。
+  var cell = sh.getRange(row, 2);
+  cell.setNumberFormat('@');
+  cell.setValue(value);
 }
 
 /** その日はじめて押した時刻を残す（あとから上書きしない。起きて動き出した時刻の目安になるので）。 */
