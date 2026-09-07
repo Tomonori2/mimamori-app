@@ -1,11 +1,11 @@
 /**
- * みまもり（GAS版） v1.2
+ * みまもり（GAS版） v1.3
  *
  * これは「古いスマホのサーバー」の代わりに、Googleの上で動く見守りの本体です。
  * やることは今までと同じ4つ。
  *   ① 押した時刻を記録する      → スプレッドシートの「記録」シート
  *   ② 毎朝チェックする          → Googleの時間トリガー（15分おき）
- *   ③ 合図がなければ知らせる    → Gmail
+ *   ③ 合図がなければ知らせる    → メール送信（MailApp）
  *   ④ ボタン画面に応答する      → doGet / doPost（ウェブアプリ）
  *
  * 大事な考え方：
@@ -19,9 +19,16 @@
  *     ブラウザのアプリにはその力がありません。だから「合図がありません」の
  *     お知らせに出る場所は、あくまで【最後に押したときの場所】です。
  *     いま現在どこにいるか、ではありません。ここを取り違えないでください。
+ *
+ * v1.3で直したもの：テスト通知が本物の見張りを止めていた不具合
+ *   メニュー②のテスト通知が、本物のお知らせと件名まで同じでした。
+ *   見張りは「きょうもう "合図がありません" を送ったか」を送信ログの件名で
+ *   確かめているので、テストを1回押しただけで、その日の本物のお知らせが
+ *   出なくなっていました。テストの件名に【テスト】を入れ、
+ *   数に入れないようにして直しています。
  */
 
-var VERSION = 'v1.2';
+var VERSION = 'v1.3';
 
 // 体調の3択。キーと、画面やメールに出す言葉の対応表。
 var MOODS = {
@@ -154,7 +161,11 @@ function alertSentToday_(today) {
     var d = rows[i][0];
     d = (d instanceof Date) ? Utilities.formatDate(d, tz_(), 'yyyy-MM-dd')
                             : String(d).slice(0, 10);
-    if (d === today && String(rows[i][2]).indexOf('合図がありません') >= 0) return true;
+    var subject = String(rows[i][2]);
+    // 【テスト】と付いたものは数に入れない。テストしただけで
+    // その日の本物のアラートが止まってしまうのを防ぐため。
+    if (subject.indexOf('【テスト】') >= 0) continue;
+    if (d === today && subject.indexOf('合図がありません') >= 0) return true;
   }
   return false;
 }
@@ -246,11 +257,19 @@ function checkin_(mood, rawLoc) {
 /* ============================================================
    メールの中身（Python版の文面をそのまま引き継いでいます）
    ============================================================ */
-function doAlert_(s) {
+/**
+ * 「合図がありません」のお知らせ。
+ * isTest が true のときは、件名に【テスト】を入れて本物と見分けられるようにする。
+ * これは見た目の問題ではなく、見守りが止まらないための作りです。
+ * alertSentToday_ は送信ログの件名で「きょうもう送ったか」を判断するので、
+ * テストと本物が同じ件名だと、テストした日は本物のアラートが出なくなってしまう。
+ */
+function doAlert_(s, isTest) {
   var name = nameOf_(s);
   sendMail_(
-    '【みまもり】' + name + 'さんから、きょうの元気の合図がありません',
-    name + 'さんから、本日の「元気です」の合図が、\n'
+    '【みまもり】' + (isTest ? '【テスト】' : '') + name + 'さんから、きょうの元気の合図がありません',
+    (isTest ? '※これはテスト送信です。実際に合図がなかったわけではありません。\n\n' : '')
+      + name + 'さんから、本日の「元気です」の合図が、\n'
       + '締め切り時刻（' + s.deadline + '）までにありませんでした。\n\n'
       + '念のため、電話や訪問で様子を確認してください。\n'
       + lastLocBlock_(s)
@@ -387,9 +406,11 @@ function testAlert() {
     SpreadsheetApp.getUi().alert('先に「設定」シートの連絡先メールを入力してください。');
     return;
   }
-  doAlert_(s);
+  doAlert_(s, true);
   SpreadsheetApp.getUi().alert('テスト通知を ' + s.contact_email + ' に送りました。\n'
-    + '受信箱を確認してください。');
+    + '受信箱を確認してください。\n\n'
+    + '件名に【テスト】と入っています。\n'
+    + 'この送信は、きょうの本物の見張りには影響しません。');
 }
 
 function showStatus() {
@@ -581,7 +602,11 @@ function recentRows_(days) {
   var from = Math.max(2, last - days + 1);
   return sh.getRange(from, 1, last - from + 1, 3).getValues().map(function (r) {
     var d = r[0] instanceof Date ? ymd_(r[0]) : String(r[0]);
-    return { d: d, t: String(r[1]), m: String(r[2]) };
+    // 時刻も日付と同じ用心をする。"07:12" と書き込んでも、スプレッドシートが
+    // 時刻データに変換していることがあり、そのまま文字にすると
+    // 「Sat Dec 30 1899 07:12:00 ...」という表示になってしまう。
+    var t = r[1] instanceof Date ? Utilities.formatDate(r[1], tz_(), 'HH:mm') : String(r[1]);
+    return { d: d, t: t, m: String(r[2]) };
   });
 }
 
