@@ -126,7 +126,7 @@
     <div class="hist" id="hist"></div>
 
     <div class="foot">
-      みまもり v1.2<span id="locBadge"></span> ・ <a id="toSetup">設定</a>
+      <span id="verTxt">みまもり</span><span id="locBadge"></span> ・ <a id="toSetup">設定</a>
     </div>
   </div>
 
@@ -192,11 +192,20 @@
 
 <script>
 // ============================================================
-// みまもり ボタン画面 v1.2
+// みまもり ボタン画面 v1.3
 // 記録・判定・メール送信はすべてGoogle側（GAS）が行います。
 // この画面は「押したことを伝える」「いまの状態を見せる」だけです。
+//
+// v1.3で直したこと（2つとも「押し忘れ」につながる向きの不具合）
+//   ① アプリに戻ってきたときに画面を作り直していなかった。
+//      ホーム画面のアイコンから開くと前の画面がそのまま復元されることがあり、
+//      日付も「きょうは伝えました ✓」も昨日のまま残っていた。
+//      本人が「もう押した」と思って押さない、という押し忘れを生む作りだった。
+//   ② 熱中症の表示を「しない」にしても出ることがあった。
+//      天気の取得とGoogleへの問い合わせを同時に走らせていたため、
+//      「出さない」と決めて消したあとに、遅れて届いた天気が上書きしていた。
 // ============================================================
-var VERSION = 'v1.2';
+var VERSION = 'v1.3';
 var KEY_URL = 'mimamori_url';
 var KEY_PREF = 'mimamori_pref';
 var KEY_LOC = 'mimamori_loc';   // 場所を送るかどうか（'1' 送る / '0' 送らない）
@@ -331,10 +340,25 @@ function callGas(payload){
 }
 
 /* ---------- 画面の書き換え ---------- */
+// いま画面に出している日付。これと本当の今日がちがえば「日をまたいだ」と分かる。
+var shownDay = '';
+function dayKey(){
+  var d = new Date();
+  return d.getFullYear() + '-' + (d.getMonth()+1) + '-' + d.getDate();
+}
+
 function showToday(){
   var w = ['日','月','火','水','木','金','土'];
   var d = new Date();
   $('today').textContent = (d.getMonth()+1) + '月' + d.getDate() + '日（' + w[d.getDay()] + '）';
+  shownDay = dayKey();
+}
+
+// 「まだ押していない」見た目に戻す。
+// 日をまたいだ瞬間に、通信の返事を待たずにまず戻すために使う。
+function showNotYet(){
+  $('doneBox').classList.add('hide');
+  $('lead').innerHTML = 'きょうの ちょうしを<br>おしえてください';
 }
 
 function showError(msg){
@@ -378,13 +402,22 @@ function heatLevel(tmax){
   return null;
 }
 
+/* 「設定」シート側のスイッチ。Googleからの返事が届くまでは出してよい扱いにする。
+   ★ 天気の取得は時間がかかるので、待っている間に「しない」と分かることがある。
+     そのときに遅れて届いた天気が画面を上書きしないよう、
+     取りに行く前と、返ってきた後の両方で、このスイッチを見る。 */
+var heatAllowed = true;
+
 function loadHeat(){
+  if (!heatAllowed){ $('heat').innerHTML = ''; return; }
   var ll = PREFS[getPref()] || PREFS['愛知県'];
   var url = 'https://api.open-meteo.com/v1/forecast?latitude=' + ll[0]
           + '&longitude=' + ll[1]
           + '&current=temperature_2m&daily=temperature_2m_max'
           + '&timezone=Asia%2FTokyo&forecast_days=1';
   fetch(url).then(function(r){ return r.json(); }).then(function(js){
+    // 待っている間に「出さない」に決まっていたら、ここで捨てる
+    if (!heatAllowed){ $('heat').innerHTML = ''; return; }
     var tmax = (js.daily && js.daily.temperature_2m_max && js.daily.temperature_2m_max[0]);
     var lv = heatLevel(tmax);
     if (!lv) { $('heat').innerHTML = ''; return; }
@@ -482,14 +515,9 @@ function refreshClearBtn(){
   else          $('clear').classList.add('hide');
 }
 
-function openMain(){
-  $('setup').classList.add('hide');
-  $('main').classList.remove('hide');
-  showToday();
-  refreshLocBadge();
-  warmPos();    // 許可済みなら、押す前にそっと場所をとっておく
-  loadHeat();   // まず手元の設定で出しておく（通信できなくても画面が寂しくならない）
-  callGas({ action:'status' })
+// Googleに「きょうの状態」を聞いて、画面をそれに合わせる。
+function fetchStatus(){
+  return callGas({ action:'status' })
     .then(function(st){
       clearError();
       renderStatus(st);
@@ -499,7 +527,8 @@ function openMain(){
       refreshLocBadge();
       // 都道府県と熱中症の表示は「設定」シート側を正とする。
       // 家族がシートで直せば、押す人のスマホを触らなくても反映される。
-      if (st.heat_alert === false) {
+      heatAllowed = (st.heat_alert !== false);
+      if (!heatAllowed) {
         $('heat').innerHTML = '';
       } else if (st.region && PREFS[st.region] && st.region !== getPref()) {
         localStorage.setItem(KEY_PREF, st.region);
@@ -512,13 +541,57 @@ function openMain(){
     });
 }
 
+function openMain(){
+  $('setup').classList.add('hide');
+  $('main').classList.remove('hide');
+  showToday();
+  refreshLocBadge();
+  warmPos();    // 許可済みなら、押す前にそっと場所をとっておく
+  loadHeat();   // まず手元の設定で出しておく（通信できなくても画面が寂しくならない）
+  fetchStatus();
+}
+
+/* アプリに戻ってきたときに、画面を作り直す。
+   ★ なぜ必要か：ホーム画面のアイコンから開くと、スマホは前の画面を
+     そのまま復元することがある。そのままだと日付も「きょうは伝えました ✓」も
+     昨日のもので、ご本人が「もう押した」と思って押さなくなる。
+     見守りアプリでいちばん避けたい「押したつもりの押し忘れ」を生む作りだった。
+   ★ 日をまたいでいたら、通信の返事を待たずに、先に
+     「まだ押していない」見た目へ戻す。電波が届かないときに
+     昨日の ✓ が残り続けるのを防ぐため（嘘を見せないことを優先する）。 */
+function onBackToApp(){
+  if (document.visibilityState !== 'visible') return;  // 裏にいる間は何もしない
+  refreshOnReturn();
+}
+
+function refreshOnReturn(){
+  if ($('main').classList.contains('hide')) return;   // 設定画面のときは何もしない
+
+  var dayChanged = (shownDay !== dayKey());
+  showToday();
+  if (dayChanged){
+    showNotYet();
+    loadHeat();   // 天気もきのうのままなので取り直す
+  }
+  warmPos();
+  fetchStatus();
+}
+
 /* ---------- 起動 ---------- */
 document.addEventListener('DOMContentLoaded', function(){
+  // 版数は VERSION の1か所だけで持つ。画面にも直書きすると必ずずれる。
+  $('verTxt').textContent = 'みまもり ' + VERSION;
+
   document.querySelectorAll('.big').forEach(function(b){
     b.addEventListener('click', function(){ checkin(b.dataset.mood); });
   });
   $('toSetup').addEventListener('click', openSetup);
   $('backMain').addEventListener('click', openMain);
+
+  // アプリに戻ってきたとき（画面を消して、またつけたときも含む）
+  document.addEventListener('visibilitychange', onBackToApp);
+  // 「戻る」で前の画面が復元されたとき
+  window.addEventListener('pageshow', function(e){ if (e.persisted) onBackToApp(); });
 
   $('save').addEventListener('click', function(){
     var u = $('url').value.trim();
