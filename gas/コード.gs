@@ -1,5 +1,5 @@
 /**
- * みまもり（GAS版） v1.0
+ * みまもり（GAS版） v1.2
  *
  * これは「古いスマホのサーバー」の代わりに、Googleの上で動く見守りの本体です。
  * やることは今までと同じ4つ。
@@ -12,9 +12,16 @@
  *   毎日1通「きょうも元気です」が届くこと自体が、この仕組みが生きている証明です。
  *   届かない日は「本人か、この仕組みのどちらかに何かあった」と分かります。
  *   だから毎日の報告は、面倒でも切らないでください。
+ *
+ * v1.2で足したもの：合図があった「場所」
+ *   ボタンを押したその瞬間の位置だけを記録します。
+ *   ★ できないこと：アプリを閉じている間、裏でずっと居場所を追いかけること。
+ *     ブラウザのアプリにはその力がありません。だから「合図がありません」の
+ *     お知らせに出る場所は、あくまで【最後に押したときの場所】です。
+ *     いま現在どこにいるか、ではありません。ここを取り違えないでください。
  */
 
-var VERSION = 'v1.1';
+var VERSION = 'v1.2';
 
 // 体調の3択。キーと、画面やメールに出す言葉の対応表。
 var MOODS = {
@@ -51,7 +58,8 @@ function resetToday() {
     ui.ButtonSet.OK_CANCEL);
   if (ans !== ui.Button.OK) return;
 
-  ['last_checkin', 'alert_date', 'clear_date', 'report_date', 'today_mood']
+  ['last_checkin', 'alert_date', 'clear_date', 'report_date', 'today_mood',
+   'last_loc', 'last_loc_at']
     .forEach(function (k) { setState_(k, ''); });
 
   ui.alert('きょうの記録を消しました。\n\n'
@@ -158,10 +166,11 @@ function alertSentToday_(today) {
 
 // 状態を返す（画面を開いたとき）
 function doGet(e) {
-  var action = (e && e.parameter && e.parameter.action) || 'status';
+  var p = (e && e.parameter) || {};
+  var action = p.action || 'status';
   if (action === 'checkin') {
     // POSTがうまくいかない環境のための逃げ道
-    return json_(checkin_((e.parameter && e.parameter.mood) || 'genki'));
+    return json_(checkin_(p.mood || 'genki', { lat: p.lat, lon: p.lon, acc: p.acc }));
   }
   return json_(status_());
 }
@@ -177,7 +186,7 @@ function doPost(e) {
     data = {};
   }
   if (data.action === 'status') return json_(status_());
-  return json_(checkin_(data.mood || 'genki'));
+  return json_(checkin_(data.mood || 'genki', data.loc));
 }
 
 function status_() {
@@ -190,33 +199,42 @@ function status_() {
     deadline: s.deadline,
     region: s.region,
     heat_alert: s.heat_alert,
+    track_location: s.track_location,
     checked_today: (stateDate_('last_checkin') === today),
     today_mood: getState_('today_mood'),
     history: recentRows_(7)
   };
 }
 
-function checkin_(mood) {
+function checkin_(mood, rawLoc) {
   if (!MOODS[mood]) mood = 'genki';
 
   var s = getSettings_();
   var now = new Date();
   var today = ymd_(now);
 
+  // 場所は「設定シートでするになっている」ときだけ受け取る。
+  // 家族がシートで「しない」にすれば、押す人のスマホを触らなくても記録は止まる。
+  var loc = s.track_location ? cleanLoc_(rawLoc) : null;
+
   setState_('last_checkin', Utilities.formatDate(now, tz_(), "yyyy-MM-dd'T'HH:mm:ss"));
   setState_('today_mood', mood);
-  addHistory_(mood, now);
+  if (loc) {
+    setState_('last_loc', loc.lat + ',' + loc.lon + ',' + loc.acc);
+    setState_('last_loc_at', Utilities.formatDate(now, tz_(), 'yyyy-MM-dd HH:mm'));
+  }
+  addHistory_(mood, now, loc);
 
   // どのメールを出すかを決める（今までのPython版と同じ判断です）
   if (s.contact_email) {
     if (stateDate_('alert_date') === today && stateDate_('clear_date') !== today) {
       // すでに「合図がありません」を送ったあとに押された → 無事を伝える
-      doAllClear_(s, now);
+      doAllClear_(s, now, loc);
       setState_('clear_date', today);
       setState_('report_date', today);   // この日の報告は済んだ扱い
     } else if (s.daily_report && stateDate_('report_date') !== today) {
       // その日はじめての合図 → 毎日の報告
-      doDailyReport_(s, now, mood);
+      doDailyReport_(s, now, mood, loc);
       setState_('report_date', today);
     }
   }
@@ -234,14 +252,15 @@ function doAlert_(s) {
     '【みまもり】' + name + 'さんから、きょうの元気の合図がありません',
     name + 'さんから、本日の「元気です」の合図が、\n'
       + '締め切り時刻（' + s.deadline + '）までにありませんでした。\n\n'
-      + '念のため、電話や訪問で様子を確認してください。\n\n'
-      + '── 最近1週間の記録 ──\n'
+      + '念のため、電話や訪問で様子を確認してください。\n'
+      + lastLocBlock_(s)
+      + '\n── 最近1週間の記録 ──\n'
       + recentLines_(7) + '\n\n'
       + '（この通知は みまもり ' + VERSION + ' から自動送信されています）\n'
   );
 }
 
-function doAllClear_(s, now) {
+function doAllClear_(s, now, loc) {
   var name = nameOf_(s);
   sendMail_(
     '【みまもり】' + name + 'さんから、遅れて元気の合図がありました',
@@ -249,11 +268,12 @@ function doAllClear_(s, now) {
       + Utilities.formatDate(now, tz_(), 'HH:mm') + ' に '
       + name + 'さんが「元気です」を押されました。\n\n'
       + '押し忘れだったようです。ひとまずご安心ください。\n'
+      + locBlock_(s, loc, '押されたときの場所')
       + '（みまもり ' + VERSION + ' からの自動送信）\n'
   );
 }
 
-function doDailyReport_(s, now, mood) {
+function doDailyReport_(s, now, mood, loc) {
   var name = nameOf_(s);
   var hhmm = Utilities.formatDate(now, tz_(), 'HH:mm');
   var subject, head;
@@ -270,7 +290,8 @@ function doDailyReport_(s, now, mood) {
   }
 
   sendMail_(subject,
-    head + '\n'
+    head
+      + locBlock_(s, loc, '合図があった場所')
       + '── 最近1週間の記録 ──\n'
       + recentLines_(7) + '\n\n'
       + '※ 押した時刻が少しずつ遅くなっていくときは、\n'
@@ -280,6 +301,65 @@ function doDailyReport_(s, now, mood) {
       + '（みまもり ' + VERSION + ' からの自動送信）\n'
   );
 }
+
+/* ============================================================
+   合図があった場所（v1.2）
+   ============================================================ */
+
+/**
+ * ボタン画面から届いた位置を、安全な形に整える。
+ * ・数字として読めないもの、地球の外の値（緯度90より大きいなど）ははじく
+ * ・小数点以下5桁（＝およそ1m）に丸める。それ以上細かくしても意味がない
+ * 変な値をそのままシートやメールに入れないための関所です。
+ */
+function cleanLoc_(raw) {
+  if (!raw) return null;
+  var lat = Number(raw.lat), lon = Number(raw.lon), acc = Number(raw.acc);
+  if (!isFinite(lat) || !isFinite(lon)) return null;
+  if (lat < -90 || lat > 90 || lon < -180 || lon > 180) return null;
+  if (lat === 0 && lon === 0) return null;   // 取れなかったときの典型的なゴミ
+  return {
+    lat: Math.round(lat * 100000) / 100000,
+    lon: Math.round(lon * 100000) / 100000,
+    acc: (isFinite(acc) && acc > 0) ? Math.round(acc) : ''
+  };
+}
+
+/** 地図で開けるリンク。スマホならGoogleマップのアプリが開きます。 */
+function mapUrl_(loc) {
+  return 'https://www.google.com/maps?q=' + loc.lat + ',' + loc.lon;
+}
+
+/** メール本文に入れる「場所」のかたまり。 */
+function locBlock_(s, loc, title) {
+  if (!s.track_location) return '\n';
+  if (!loc) {
+    return '\n※ 場所は分かりませんでした。\n'
+         + '　 スマホで位置情報が許可されていないか、電波が届かなかったようです。\n\n';
+  }
+  return '\n── ' + title + ' ──\n'
+       + '  ' + loc.lat + ', ' + loc.lon
+       + (loc.acc ? '（誤差 およそ ' + loc.acc + 'm）' : '') + '\n'
+       + '  地図：' + mapUrl_(loc) + '\n\n';
+}
+
+/** 「合図がありません」のメール用。最後に押されたときの場所を出す。 */
+function lastLocBlock_(s) {
+  if (!s.track_location) return '\n';
+  var raw = String(getState_('last_loc') || '').split(',');
+  var loc = cleanLoc_({ lat: raw[0], lon: raw[1], acc: raw[2] });
+  if (!loc) return '\n';
+
+  var at = String(getState_('last_loc_at') || '');
+  return '\n── 最後に合図があったときの場所 ──\n'
+       + (at ? '  ' + at + '\n' : '')
+       + '  ' + loc.lat + ', ' + loc.lon
+       + (loc.acc ? '（誤差 およそ ' + loc.acc + 'm）' : '') + '\n'
+       + '  地図：' + mapUrl_(loc) + '\n'
+       + '  ※ これは【最後にボタンを押したときの場所】です。\n'
+       + '　　 いま現在いる場所ではありません。\n\n';
+}
+
 
 /**
  * メールを送る。
@@ -321,7 +401,10 @@ function showStatus() {
     'みまもり ' + VERSION + '\n\n'
     + '見張り（15分おき）：' + (triggers.length ? '動いています ✓' : '止まっています ✗ → 初期設定をやり直してください') + '\n'
     + 'きょうの合図：' + (st.checked_today ? 'あり（' + (MOODS[st.today_mood] || {}).short + '）' : 'まだありません') + '\n'
-    + '締め切り時刻：' + st.deadline
+    + '締め切り時刻：' + st.deadline + '\n'
+    + '場所の記録：' + (st.track_location ? 'する' : 'しない')
+    + (st.track_location && getState_('last_loc')
+        ? '（最後：' + getState_('last_loc_at') + '）' : '')
   );
 }
 
@@ -344,25 +427,45 @@ function sheet_(name) {
   return sh;
 }
 
+var HISTORY_HEADER = ['日付', '時刻', '体調', '緯度', '経度', '誤差(m)', '地図'];
+
 function ensureSheets_() {
   var st = sheet_(SHEET_SETTINGS);
   if (st.getLastRow() === 0) {
-    st.getRange(1, 1, 7, 2).setValues([
+    st.getRange(1, 1, 8, 2).setValues([
       ['項目', '値'],
       ['見守る方のお名前', ''],
       ['連絡先メール（家族）', ''],
       ['締め切り時刻', '10:00'],
       ['毎日の報告メール', 'する'],
       ['熱中症の警戒を出す', 'する'],
-      ['お住まいの都道府県', '愛知県']
+      ['お住まいの都道府県', '愛知県'],
+      ['合図があった場所を記録する', 'する']
     ]);
     st.setColumnWidth(1, 200);
     st.setColumnWidth(2, 260);
     st.getRange('A1:B1').setFontWeight('bold');
+  } else {
+    // 前の版から使っている方のために、足りない項目だけ下に追加する。
+    // すでにある行には触らないので、設定が消えることはありません。
+    var have = {};
+    st.getRange(1, 1, st.getLastRow(), 1).getValues()
+      .forEach(function (r) { have[String(r[0]).trim()] = true; });
+    if (!have['合図があった場所を記録する']) {
+      st.appendRow(['合図があった場所を記録する', 'する']);
+    }
   }
 
   var hi = sheet_(SHEET_HISTORY);
-  if (hi.getLastRow() === 0) hi.appendRow(['日付', '時刻', '体調']);
+  if (hi.getLastRow() === 0) {
+    hi.appendRow(HISTORY_HEADER);
+  } else if (hi.getLastColumn() < HISTORY_HEADER.length) {
+    // 3列だった「記録」シートを7列に広げる（すでにある中身はそのまま）
+    if (hi.getMaxColumns() < HISTORY_HEADER.length) {
+      hi.insertColumnsAfter(hi.getMaxColumns(), HISTORY_HEADER.length - hi.getMaxColumns());
+    }
+    hi.getRange(1, 1, 1, HISTORY_HEADER.length).setValues([HISTORY_HEADER]);
+  }
 
   var ml = sheet_(SHEET_MAILLOG);
   if (ml.getLastRow() === 0) ml.appendRow(['日時', '宛先', '件名']);
@@ -374,7 +477,8 @@ function getSettings_() {
   var sh = ss_().getSheetByName(SHEET_SETTINGS);
   if (!sh || sh.getLastRow() < 2) {
     return { name: '', contact_email: '', deadline: '10:00',
-             daily_report: true, heat_alert: true, region: '愛知県' };
+             daily_report: true, heat_alert: true, region: '愛知県',
+             track_location: true };
   }
   var rows = sh.getRange(2, 1, sh.getLastRow() - 1, 2).getValues();
   var v = {};
@@ -395,7 +499,8 @@ function getSettings_() {
     deadline: dl,
     daily_report: String(v['毎日の報告メール'] || 'する').trim() !== 'しない',
     heat_alert: String(v['熱中症の警戒を出す'] || 'する').trim() !== 'しない',
-    region: String(v['お住まいの都道府県'] || '愛知県').trim()
+    region: String(v['お住まいの都道府県'] || '愛知県').trim(),
+    track_location: String(v['合図があった場所を記録する'] || 'する').trim() !== 'しない'
   };
 }
 
@@ -444,8 +549,9 @@ function setState_(key, value) {
   cell.setValue(value);
 }
 
-/** その日はじめて押した時刻を残す（あとから上書きしない。起きて動き出した時刻の目安になるので）。 */
-function addHistory_(mood, now) {
+/** その日はじめて押した時刻を残す（あとから上書きしない。起きて動き出した時刻の目安になるので）。
+ *  場所は押しなおすたびに最新にする（そのほうが「いちばん新しく分かっている場所」になるため）。 */
+function addHistory_(mood, now, loc) {
   var sh = sheet_(SHEET_HISTORY);
   var today = ymd_(now);
   var last = sh.getLastRow();
@@ -455,10 +561,17 @@ function addHistory_(mood, now) {
     if (lastDate instanceof Date) lastDate = ymd_(lastDate);
     if (String(lastDate) === today) {
       sh.getRange(last, 3).setValue(MOODS[mood].short);  // 体調だけ最新に更新
+      if (loc) sh.getRange(last, 4, 1, 4).setValues([locCells_(loc)]);
       return;
     }
   }
-  sh.appendRow([today, Utilities.formatDate(now, tz_(), 'HH:mm'), MOODS[mood].short]);
+  sh.appendRow([today, Utilities.formatDate(now, tz_(), 'HH:mm'), MOODS[mood].short]
+    .concat(loc ? locCells_(loc) : ['', '', '', '']));
+}
+
+/** 「記録」シートの右4列（緯度・経度・誤差・地図）ぶんの中身。 */
+function locCells_(loc) {
+  return [loc.lat, loc.lon, loc.acc, mapUrl_(loc)];
 }
 
 function recentRows_(days) {

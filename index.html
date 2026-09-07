@@ -73,6 +73,16 @@
     width:100%;padding:14px;font-size:17px;border:2px solid #cfd8e3;border-radius:12px;
     background:#fff;color:var(--ink);
   }
+  /* チェックボックスだけは横幅いっぱいにしない */
+  .setup input[type=checkbox]{
+    width:24px;height:24px;padding:0;margin:0 10px 0 0;vertical-align:-4px;
+  }
+  .setup label.check{font-weight:700;cursor:pointer}
+  .setup button.testbtn{
+    background:#fff;color:#3a7bd5;border:2px solid #bcd0ee;
+    margin-top:12px;font-size:17px;font-weight:700;
+  }
+  .setup a.maplink{color:#3a7bd5;font-size:16px;text-decoration:underline}
   .setup button{
     width:100%;margin-top:22px;padding:18px;font-size:20px;font-weight:800;
     color:#fff;background:var(--green);border:none;border-radius:16px;cursor:pointer;
@@ -116,7 +126,7 @@
     <div class="hist" id="hist"></div>
 
     <div class="foot">
-      みまもり v1.1 ・ <a id="toSetup">設定</a>
+      みまもり v1.2<span id="locBadge"></span> ・ <a id="toSetup">設定</a>
     </div>
   </div>
 
@@ -137,6 +147,26 @@
     <div class="note" style="margin-top:6px">
       つながったあとは、スプレッドシートの「設定」シートの都道府県が使われます。
       ここは、まだつながっていないときの仮の設定です。
+    </div>
+
+    <label class="check" for="loc" style="margin-top:24px">
+      <input type="checkbox" id="loc">合図といっしょに「いる場所」も送る
+    </label>
+    <div class="note" style="margin-top:6px">
+      ボタンを<b>押したその瞬間</b>の場所だけを記録し、ご家族へのメールに地図のリンクを付けます。
+      いつも家で押している方が、ある日ちがう場所で押していれば「出先で無事に押せている」と分かります。<br><br>
+      <b>できないこと：</b>アプリを閉じている間、ずっと居場所を追いかけること。
+      ブラウザのアプリにはその力がありません。「合図がありません」のお知らせに出る場所は、
+      あくまで<b>最後に押したときの場所</b>で、いま現在いる場所ではありません。<br><br>
+      場所は、ご家族のスプレッドシートに記録されます。作者や他の人には届きません。
+    </div>
+
+    <button id="locTest" class="testbtn">位置情報をいま試す</button>
+    <div class="msg" id="locMsg"></div>
+    <div class="note">
+      ※ 初めて試すとき、スマホが「位置情報を許可しますか」と聞いてきます。
+      <b>ここで家族の方が「許可」を押しておいてください。</b>
+      先に済ませておけば、ご本人がボタンを押すときにこの質問は出ません。
     </div>
 
     <button id="save">保存してはじめる</button>
@@ -162,13 +192,14 @@
 
 <script>
 // ============================================================
-// みまもり ボタン画面 v1.0
+// みまもり ボタン画面 v1.2
 // 記録・判定・メール送信はすべてGoogle側（GAS）が行います。
 // この画面は「押したことを伝える」「いまの状態を見せる」だけです。
 // ============================================================
-var VERSION = 'v1.1';
+var VERSION = 'v1.2';
 var KEY_URL = 'mimamori_url';
 var KEY_PREF = 'mimamori_pref';
+var KEY_LOC = 'mimamori_loc';   // 場所を送るかどうか（'1' 送る / '0' 送らない）
 
 // 都道府県と県庁所在地のおおよその位置（server.py の表をそのまま引き継ぎ）。
 // 通信せずに決められるので、圏外でも設定できる。
@@ -197,6 +228,77 @@ function $(id){ return document.getElementById(id); }
 function getUrl(){ return localStorage.getItem(KEY_URL) || ''; }
 function getPref(){ return localStorage.getItem(KEY_PREF) || '愛知県'; }
 
+/* ---------- 場所（v1.2） ----------
+   考え方：位置は「あると助かる おまけ」。
+   取れなくても、遅くても、見守りの本体（元気ですを伝えること）は
+   ぜったいに止めない。ここを守るために、
+   ・位置の取得は必ず数秒で打ち切る
+   ・失敗しても例外にせず null を返す（押す処理はそのまま進む）
+   ・ふだんの画面では許可のダイアログを出さない（家族が設定画面で先に済ませる）
+   という3つの決まりにしています。 */
+var lastPos = null;        // 直近に取れた場所（10分だけ使い回す）
+var sheetAllowsLoc = true; // スプレッドシートの「設定」シート側のスイッチ
+
+function locOn(){ return localStorage.getItem(KEY_LOC) !== '0'; }
+
+// いまの許可の状態を調べる。ここではダイアログは出ない。
+function permState(){
+  if (!navigator.geolocation) return Promise.resolve('unavailable');
+  if (!navigator.permissions || !navigator.permissions.query) return Promise.resolve('unknown');
+  return navigator.permissions.query({ name:'geolocation' })
+    .then(function(p){ return p.state; })
+    .catch(function(){ return 'unknown'; });
+}
+
+// 場所をとる。失敗しても null を返すだけで、エラーにはしない。
+function getPos(timeoutMs, maxAgeMs){
+  return new Promise(function(resolve){
+    if (!navigator.geolocation) return resolve(null);
+    var done = false;
+    // ブラウザのtimeoutが効かない機種があるので、こちら側でも必ず打ち切る
+    var timer = setTimeout(function(){ if(!done){ done = true; resolve(null); } }, timeoutMs + 800);
+    function finish(v){ if(done) return; done = true; clearTimeout(timer); resolve(v); }
+    navigator.geolocation.getCurrentPosition(
+      function(p){
+        finish({
+          lat: Math.round(p.coords.latitude  * 100000) / 100000,
+          lon: Math.round(p.coords.longitude * 100000) / 100000,
+          acc: p.coords.accuracy ? Math.round(p.coords.accuracy) : '',
+          at:  Date.now()
+        });
+      },
+      function(){ finish(null); },
+      // 高精度（GPS）は使わない。屋内では届かないうえ電池を食うので、
+      // Wi-Fiや基地局から出るおおまかな位置で十分。
+      { enableHighAccuracy:false, timeout:timeoutMs, maximumAge:maxAgeMs }
+    );
+  });
+}
+
+// 押すときに使う場所。ここでは絶対に許可ダイアログを出さない。
+function currentLoc(){
+  if (!locOn() || !sheetAllowsLoc) return Promise.resolve(null);
+  return permState().then(function(st){
+    if (st === 'denied' || st === 'unavailable' || st === 'prompt') return null;
+    return getPos(2500, 120000).then(function(p){
+      if (p) { lastPos = p; return p; }
+      // 取れなかったら、10分以内に取れていた分を使う
+      if (lastPos && (Date.now() - lastPos.at) < 600000) return lastPos;
+      return null;
+    });
+  });
+}
+
+// 画面を開いたときに、そっと1回だけ取っておく（許可済みのときだけ）。
+// こうしておくと、ボタンを押した瞬間は待たずにすみます。
+function warmPos(){
+  if (!locOn()) return;
+  permState().then(function(st){
+    if (st !== 'granted') return;
+    getPos(6000, 300000).then(function(p){ if (p) lastPos = p; });
+  });
+}
+
 /* ---------- Googleとのやりとり ----------
    本文を text/plain で送るのがコツ。application/json にすると
    ブラウザが事前確認（プリフライト）を挟み、GASはそれに答えられず失敗する。
@@ -216,6 +318,11 @@ function callGas(payload){
     // 逃げ道：GETで投げ直す
     var q = url + (url.indexOf('?') >= 0 ? '&' : '?') + 'action=' + encodeURIComponent(payload.action || 'status');
     if (payload.mood) q += '&mood=' + encodeURIComponent(payload.mood);
+    if (payload.loc) {
+      q += '&lat=' + encodeURIComponent(payload.loc.lat)
+         + '&lon=' + encodeURIComponent(payload.loc.lon)
+         + '&acc=' + encodeURIComponent(payload.loc.acc);
+    }
     return fetch(q, { redirect:'follow' }).then(function(r){
       if(!r.ok) throw new Error('HTTP ' + r.status);
       return r.json();
@@ -301,7 +408,13 @@ function checkin(mood){
   var btns = document.querySelectorAll('.big');
   for (var i=0;i<btns.length;i++) btns[i].disabled = true;
 
-  callGas({ action:'checkin', mood: mood })
+  // 場所は「取れたら付ける」だけ。取れなくてもそのまま送る。
+  currentLoc()
+    .then(function(loc){
+      var payload = { action:'checkin', mood: mood };
+      if (loc) payload.loc = { lat: loc.lat, lon: loc.lon, acc: loc.acc };
+      return callGas(payload);
+    })
     .then(function(res){
       if (!res || !res.ok) throw new Error('返事がおかしいです');
       $('doneBox').classList.remove('hide');
@@ -330,9 +443,37 @@ function buildPrefSelect(){
 function openSetup(){
   buildPrefSelect();
   $('url').value = getUrl();
+  $('loc').checked = locOn();
+  showPermState();
   refreshClearBtn();
   $('main').classList.add('hide');
   $('setup').classList.remove('hide');
+}
+
+// いまの許可の状態を、専門用語なしで見せる
+function showPermState(){
+  if (!$('loc').checked){ $('locMsg').textContent = ''; return; }
+  permState().then(function(st){
+    var m = $('locMsg');
+    if (st === 'granted'){
+      m.style.color = '#1f9d63';
+      m.textContent = 'このスマホは位置情報が許可されています ✓';
+    } else if (st === 'denied'){
+      m.style.color = '#b3261e';
+      m.textContent = '位置情報が拒否されています。スマホの「設定 → アプリ → Chrome → 権限 → 位置情報」で許可してください。';
+    } else if (st === 'unavailable'){
+      m.style.color = '#b3261e';
+      m.textContent = 'このスマホでは位置情報が使えないようです。';
+    } else {
+      m.style.color = '#5b6b7a';
+      m.textContent = 'まだ許可されていません。下の「位置情報をいま試す」を押してください。';
+    }
+  });
+}
+
+// 場所を送る設定のときだけ、ふだんの画面の下に小さく出す（黙って送らない）
+function refreshLocBadge(){
+  $('locBadge').textContent = (locOn() && sheetAllowsLoc) ? '（場所も送ります）' : '';
 }
 
 // 「消す」ボタンは、設定が入っているときだけ見せる
@@ -345,11 +486,17 @@ function openMain(){
   $('setup').classList.add('hide');
   $('main').classList.remove('hide');
   showToday();
+  refreshLocBadge();
+  warmPos();    // 許可済みなら、押す前にそっと場所をとっておく
   loadHeat();   // まず手元の設定で出しておく（通信できなくても画面が寂しくならない）
   callGas({ action:'status' })
     .then(function(st){
       clearError();
       renderStatus(st);
+      // 場所を記録するかどうかも「設定」シート側を正とする。
+      // 家族がシートで「しない」にすれば、押す人のスマホを触らなくても止まる。
+      sheetAllowsLoc = (st.track_location !== false);
+      refreshLocBadge();
       // 都道府県と熱中症の表示は「設定」シート側を正とする。
       // 家族がシートで直せば、押す人のスマホを触らなくても反映される。
       if (st.heat_alert === false) {
@@ -382,10 +529,47 @@ document.addEventListener('DOMContentLoaded', function(){
     }
     localStorage.setItem(KEY_URL, u);
     localStorage.setItem(KEY_PREF, $('pref').value);
+    localStorage.setItem(KEY_LOC, $('loc').checked ? '1' : '0');
     $('setupMsg').style.color = '#1f9d63';
     $('setupMsg').textContent = '保存しました ✓';
     refreshClearBtn();
     setTimeout(openMain, 500);
+  });
+
+  // チェックを切り替えたら、その場で保存して状態も出しなおす
+  $('loc').addEventListener('change', function(){
+    localStorage.setItem(KEY_LOC, $('loc').checked ? '1' : '0');
+    if (!$('loc').checked) { lastPos = null; $('locMsg').textContent = ''; }
+    else showPermState();
+    refreshLocBadge();
+  });
+
+  // 「いま試す」だけは、わざと許可のダイアログを出しにいく。
+  // 家族がそばにいるこの場面で済ませておけば、ご本人が驚かずにすむ。
+  $('locTest').addEventListener('click', function(){
+    var m = $('locMsg');
+    m.style.color = '#5b6b7a';
+    m.textContent = 'いまの場所をさがしています…';
+    getPos(10000, 0).then(function(p){
+      if (!p){
+        m.style.color = '#b3261e';
+        m.innerHTML = '場所が取れませんでした。<br>'
+          + '許可を断ったか、屋内で電波が弱いのかもしれません。<br>'
+          + 'スマホの「設定 → アプリ → Chrome → 権限 → 位置情報」も確かめてください。';
+        return;
+      }
+      lastPos = p;
+      m.style.color = '#1f9d63';
+      m.textContent = '取れました ✓ 誤差はおよそ ' + (p.acc || '?') + 'm です　';
+      // 数字だけを組み立てるので、そのままURLにしても安全
+      var a = document.createElement('a');
+      a.className = 'maplink';
+      a.href = 'https://www.google.com/maps?q=' + p.lat + ',' + p.lon;
+      a.target = '_blank';
+      a.rel = 'noopener';
+      a.textContent = '地図で見る';
+      m.appendChild(a);
+    });
   });
 
   $('clear').addEventListener('click', function(){
@@ -394,7 +578,10 @@ document.addEventListener('DOMContentLoaded', function(){
                + '消してよろしいですか？')) return;
     localStorage.removeItem(KEY_URL);
     localStorage.removeItem(KEY_PREF);
+    localStorage.removeItem(KEY_LOC);
+    lastPos = null;
     $('url').value = '';
+    $('loc').checked = true;
     $('setupMsg').style.color = '#5b6b7a';
     $('setupMsg').textContent = 'この端末の設定を消しました。';
     refreshClearBtn();
