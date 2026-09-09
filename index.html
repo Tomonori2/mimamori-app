@@ -98,8 +98,10 @@
     width:100%;padding:14px;font-size:17px;border:2px solid #cfd8e3;border-radius:12px;
     background:#fff;color:var(--ink);
   }
-  /* チェックボックスだけは横幅いっぱいにしない */
-  .setup input[type=checkbox]{
+  /* チェックボックスと丸い選択ボタンだけは横幅いっぱいにしない。
+     ここに書き忘れると、上の「.setup input」の幅100%が効いてしまい、
+     ○ だけが行の真ん中に飛び、文字が下の行に落ちる。 */
+  .setup input[type=checkbox],.setup input[type=radio]{
     width:24px;height:24px;padding:0;margin:0 10px 0 0;vertical-align:-4px;
   }
   .setup label.check{font-weight:700;cursor:pointer}
@@ -288,7 +290,7 @@
 //     （家族の端末から押せると、ご本人が押していない日でも「元気」と
 //       記録され、お知らせが止まってしまう）
 // ============================================================
-var VERSION = 'v1.4';
+var VERSION = 'v1.4.1';
 var KEY_URL = 'mimamori_url';
 var KEY_PREF = 'mimamori_pref';
 var KEY_LOC = 'mimamori_loc';   // 場所を送るかどうか（'1' 送る / '0' 送らない）
