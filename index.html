@@ -64,6 +64,31 @@
   .foot{margin-top:30px;font-size:13px;color:#9aa5b1}
   .foot a{color:#9aa5b1;text-decoration:underline;cursor:pointer}
 
+  /* ===== ご家族用の画面（v1.4） =====
+     ここには「元気です」ボタンを置きません。見るだけの画面です。 */
+  .fam{max-width:460px;margin:0 auto;text-align:left}
+  .fam h1{font-size:21px;margin:14px 0 2px;text-align:center;color:#2b3a45}
+  .fam .asof{font-size:13px;color:#9aa5b1;text-align:center;margin-bottom:12px}
+  .verdict{border-radius:22px;padding:24px 18px;text-align:center;color:#fff;margin:8px 0}
+  .verdict .v1{font-size:26px;font-weight:900;line-height:1.4}
+  .verdict .v2{font-size:17px;margin-top:10px;line-height:1.7}
+  .card{background:var(--card);border-radius:18px;padding:16px;margin:12px 0}
+  .card h2{font-size:15px;color:#8a97a3;margin:0 0 8px;font-weight:700}
+  .kv{font-size:16px;color:var(--sub);line-height:2}
+  .kv b{color:var(--ink)}
+  .warnline{
+    background:#fdecea;border:3px solid #b3261e;color:#8c1d18;border-radius:16px;
+    padding:16px;font-size:17px;font-weight:700;line-height:1.6;margin:12px 0;
+  }
+  .okline{font-size:14px;color:#8a97a3;margin:12px 0;line-height:1.6}
+  .fam button.act{
+    width:100%;margin-top:12px;padding:17px;font-size:19px;font-weight:800;
+    color:#fff;background:var(--blue);border:none;border-radius:16px;cursor:pointer;
+  }
+  .fam button.act.sub2{background:#fff;color:#5b6b7a;border:2px solid #cfd8e3;font-size:17px;font-weight:700}
+  .chart{width:100%;height:auto;display:block}
+  .legend{font-size:14px;color:#8a97a3;line-height:1.8;margin-top:8px}
+
   /* 設定画面 */
   .setup{max-width:460px;margin:0 auto;text-align:left}
   .setup h1{font-size:22px;margin:18px 0 8px}
@@ -130,6 +155,26 @@
     </div>
   </div>
 
+  <!-- ===== ご家族用の画面（v1.4・見るだけ） ===== -->
+  <div id="family" class="fam hide">
+    <h1 id="famName">ようす</h1>
+    <div class="asof" id="famAsOf"></div>
+
+    <div id="famVerdict"></div>
+    <div id="famErr"></div>
+    <div id="famWatch"></div>
+    <div id="famDetail"></div>
+    <div id="famChart"></div>
+
+    <button id="famCall" class="act hide"></button>
+    <button id="famReload" class="act sub2">最新にする</button>
+    <div class="msg" id="famMsg" style="color:#8a97a3;font-weight:400"></div>
+
+    <div class="foot" style="text-align:center">
+      <span id="famVer">みまもり</span> ・ <a id="famToSetup">設定</a>
+    </div>
+  </div>
+
   <!-- ===== 設定画面 ===== -->
   <div id="setup" class="setup hide">
     <h1>みまもり の設定</h1>
@@ -142,6 +187,22 @@
     <input id="url" type="url" placeholder="https://script.google.com/macros/s/.../exec"
            autocomplete="off" spellcheck="false">
 
+    <label style="margin-top:24px">この端末の使い方</label>
+    <label class="check" for="roleUser">
+      <input type="radio" name="role" id="roleUser" value="user">ご本人が使う（大きなボタンを出す）
+    </label>
+    <label class="check" for="roleFamily" style="margin-top:8px">
+      <input type="radio" name="role" id="roleFamily" value="family">ご家族が見る（ボタンは出さない）
+    </label>
+    <div class="note" style="margin-top:6px">
+      ご家族の端末は、かならず<b>「ご家族が見る」</b>を選んでください。<br>
+      押せる端末が増えると、ご本人が押していない日でも「元気」として記録され、
+      <b>お知らせが止まってしまいます。</b>「ご家族が見る」ならボタンが出ないので、
+      まちがって押してしまう心配がありません。
+    </div>
+
+    <!-- ここから下は「ご本人が使う」ときだけ出す -->
+    <div id="userOnly">
     <label for="pref">お住まいの都道府県（暑さの注意に使います）</label>
     <select id="pref"></select>
     <div class="note" style="margin-top:6px">
@@ -167,6 +228,20 @@
       ※ 初めて試すとき、スマホが「位置情報を許可しますか」と聞いてきます。
       <b>ここで家族の方が「許可」を押しておいてください。</b>
       先に済ませておけば、ご本人がボタンを押すときにこの質問は出ません。
+    </div>
+    </div><!-- /userOnly -->
+
+    <!-- ここから下は「ご家族が見る」ときだけ出す -->
+    <div id="familyOnly" class="hide">
+      <label for="tel">ご本人の電話番号（この端末だけに保存します）</label>
+      <input id="tel" type="tel" placeholder="09012345678"
+             autocomplete="off" spellcheck="false" inputmode="tel">
+      <div class="note" style="margin-top:6px">
+        入れておくと、家族用の画面に<b>「電話する」ボタン</b>が出ます。
+        お知らせが届いたときに、すぐ確かめられます。<br>
+        番号はこの端末の中だけに保存され、スプレッドシートにも作者にも送られません。
+        空のままでもかまいません。
+      </div>
     </div>
 
     <button id="save">保存してはじめる</button>
@@ -204,11 +279,21 @@
 //   ② 熱中症の表示を「しない」にしても出ることがあった。
 //      天気の取得とGoogleへの問い合わせを同時に走らせていたため、
 //      「出さない」と決めて消したあとに、遅れて届いた天気が上書きしていた。
+//
+// v1.4で足したこと：ご家族用の画面
+//   ご家族が、メールを待たずに「いまどうなっているか」を見られる画面です。
+//   ★ この画面には「元気です」ボタンを出しません。
+//     いままでは「押す端末は1台だけにしてください」という注意書きだけで
+//     守っていた決まりを、作りそのもので守るようにしました。
+//     （家族の端末から押せると、ご本人が押していない日でも「元気」と
+//       記録され、お知らせが止まってしまう）
 // ============================================================
-var VERSION = 'v1.3';
+var VERSION = 'v1.4';
 var KEY_URL = 'mimamori_url';
 var KEY_PREF = 'mimamori_pref';
 var KEY_LOC = 'mimamori_loc';   // 場所を送るかどうか（'1' 送る / '0' 送らない）
+var KEY_ROLE = 'mimamori_role'; // この端末の使い方（'user' 本人 / 'family' 家族）
+var KEY_TEL  = 'mimamori_tel';  // ご本人の電話番号（家族の端末にだけ入る）
 
 // 都道府県と県庁所在地のおおよその位置（server.py の表をそのまま引き継ぎ）。
 // 通信せずに決められるので、圏外でも設定できる。
@@ -236,6 +321,17 @@ var MOOD_LABEL = { genki:'元気', futsu:'ふつう', shindoi:'しんどい' };
 function $(id){ return document.getElementById(id); }
 function getUrl(){ return localStorage.getItem(KEY_URL) || ''; }
 function getPref(){ return localStorage.getItem(KEY_PREF) || '愛知県'; }
+function getRole(){ return localStorage.getItem(KEY_ROLE) === 'family' ? 'family' : 'user'; }
+function getTel(){ return localStorage.getItem(KEY_TEL) || ''; }
+
+/* 画面に文字を差し込むときは、かならずここを通す。
+   スプレッドシートは家族が手で書き換えられるので、そこに
+   「<」や「"」が入っていても、画面がおかしくならないようにするため。 */
+function esc(s){
+  return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){
+    return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c];
+  });
+}
 
 /* ---------- 場所（v1.2） ----------
    考え方：位置は「あると助かる おまけ」。
@@ -386,7 +482,8 @@ function renderHistory(rows){
   rows.slice().reverse().forEach(function(r){
     var p = String(r.d).split('-');
     var wd = (p.length === 3) ? w[new Date(+p[0], +p[1]-1, +p[2]).getDay()] : '　';
-    html += (p[1]||'') + '/' + (p[2]||'') + '（' + wd + '） ' + r.t + '　' + r.m + '<br>';
+    html += esc(p[1]||'') + '/' + esc(p[2]||'') + '（' + wd + '） '
+          + esc(r.t) + '　' + esc(r.m) + '<br>';
   });
   $('hist').innerHTML = html;
   $('hist').classList.remove('hide');
@@ -437,6 +534,10 @@ function loadHeat(){
 
 /* ---------- 押したとき ---------- */
 function checkin(mood){
+  // ★ 家族用の端末からは、ぜったいに合図を送らない。
+  //   画面にボタンを出していないので普通は呼ばれないが、
+  //   見守りがいちばん壊れる道なので、入口でも止めておく。
+  if (getRole() === 'family') return;
   clearError();
   var btns = document.querySelectorAll('.big');
   for (var i=0;i<btns.length;i++) btns[i].disabled = true;
@@ -466,6 +567,235 @@ function checkin(mood){
     });
 }
 
+/* ============================================================
+   ご家族用の画面（v1.4）
+   ここは「見るだけ」。合図を送る道はどこにもありません。
+   ============================================================ */
+
+var famBusy = false;
+
+function openFamily(){
+  $('main').classList.add('hide');
+  $('setup').classList.add('hide');
+  $('family').classList.remove('hide');
+  $('famVer').textContent = 'みまもり ' + VERSION + '（ご家族用・押せません）';
+  renderCallBtn();
+  loadFamily();
+}
+
+function loadFamily(){
+  if (famBusy) return;
+  famBusy = true;
+  $('famMsg').textContent = '読み込んでいます…';
+
+  callGas({ action:'family' })
+    .then(function(st){
+      if (!st || !st.ok) throw new Error('返事がおかしいです');
+      $('famMsg').textContent = '';
+      $('famErr').innerHTML = '';
+      renderFamily(st);
+    })
+    .catch(function(e){
+      // ★ つながらなかったときに、さっきまでの表示を残さない。
+      //   「きょうは合図がありました ✓」が画面に残ったままだと、
+      //   本当は分からないのに、分かったつもりにさせてしまう。
+      $('famMsg').textContent = '';
+      $('famVerdict').innerHTML =
+        '<div class="verdict" style="background:#7b8794">'
+        + '<div class="v1">いまの様子が<br>分かりませんでした</div>'
+        + '<div class="v2">電波が届いていないか、設定のURLがちがうようです。</div></div>';
+      $('famWatch').innerHTML = '';
+      $('famDetail').innerHTML = '';
+      $('famChart').innerHTML = '';
+      $('famErr').innerHTML = '<div class="err">⚠️ Googleにつながりませんでした。<br>'
+        + '<span style="font-size:15px;font-weight:400">（' + esc(e.message) + '）</span></div>';
+    })
+    .then(function(){ famBusy = false; });
+}
+
+function renderFamily(st){
+  // textContent はそれ自体が安全なので、ここで esc() を通すと
+  // 記号がそのまま文字になって見えてしまう（二重にしない）
+  $('famName').textContent = (st.name ? st.name + 'さん' : '見守り中の方') + 'の ようす';
+  $('famAsOf').textContent = st.now ? (st.now + ' 現在') : '';
+
+  renderVerdict(st);
+  renderWatch(st);
+  renderDetail(st);
+  renderChart(st.history || []);
+}
+
+/* ① いちばん上の、大きな結論。メールを探さなくてもここだけで分かるように。 */
+function renderVerdict(st){
+  var v;
+  var hhmm = stampTime(st.last_checkin);
+
+  if (st.checked_today){
+    if (st.today_mood === 'shindoi'){
+      v = { bg:'#e07b39',
+            v1:'きょうの合図は<br>ありました',
+            v2:(hhmm ? hhmm + ' に合図があり、' : '') + '体調は<b>「しんどい」</b>でした。<br>'
+             + 'お時間があれば、声をかけてあげてください。' };
+    } else {
+      v = { bg:'#1f9d63',
+            v1:'きょうは<br>合図がありました',
+            v2:(hhmm ? hhmm + '　' : '') + '体調は「' + esc(MOOD_LABEL[st.today_mood] || '－') + '」でした。' };
+    }
+    if (st.cleared_today){
+      v.v2 += '<br><span style="font-size:15px">（「合図がありません」のお知らせのあとに押されました）</span>';
+    }
+  } else if (st.past_deadline){
+    v = { bg:'#b3261e',
+          v1:'きょうは まだ<br>合図がありません',
+          v2:'締め切りの ' + esc(st.deadline) + ' を過ぎています。<br>'
+           + (st.alerted_today ? 'お知らせのメールは送信済みです。<br>' : '')
+           + '電話や訪問で、様子を確かめてください。' };
+  } else {
+    v = { bg:'#5b6b7a',
+          v1:'きょうは まだ<br>合図がありません',
+          v2:'締め切りは ' + esc(st.deadline) + ' です。<br>'
+           + 'それまでは、めずらしいことではありません。' };
+  }
+
+  $('famVerdict').innerHTML = '<div class="verdict" style="background:' + v.bg + '">'
+    + '<div class="v1">' + v.v1 + '</div>'
+    + '<div class="v2">' + v.v2 + '</div></div>';
+}
+
+/* ② 見張りが生きているか。
+   見張りが止まると「合図がなくてもメールが来ない」という、
+   外からは平和に見えるのに中身が死んでいる状態になる。
+   これがこの画面を作ったいちばんの理由です。 */
+function renderWatch(st){
+  if (st.watching === false){
+    $('famWatch').innerHTML = '<div class="warnline">⚠️ 見守りの見張りが止まっています。<br>'
+      + 'このままだと、合図がなかった日でも<b>お知らせのメールは届きません</b>。<br>'
+      + 'スプレッドシートを開いて、上のメニュー「みまもり」→「① 初期設定」を'
+      + 'もう一度実行してください。</div>';
+  } else if (st.watching === true){
+    $('famWatch').innerHTML = '<div class="okline">見張りは動いています ✓'
+      + '（15分おきに、合図があったか確かめています）</div>';
+  } else {
+    $('famWatch').innerHTML = '';   // 分からないときは、うその安心もうその警告も出さない
+  }
+}
+
+/* ③ こまかい情報と、最後に押したときの場所 */
+function renderDetail(st){
+  var h = '<div class="card"><div class="kv">'
+    + '締め切り時刻：<b>' + esc(st.deadline) + '</b><br>'
+    + '最後の合図：<b>' + (st.last_checkin ? esc(stampFull(st.last_checkin)) : 'まだありません') + '</b><br>'
+    + '毎日の報告メール：<b>' + (st.daily_report ? 'あり' : 'なし') + '</b>'
+    + '</div>';
+
+  if (st.last_loc){
+    h += '<div class="kv" style="margin-top:10px">最後に押したときの場所：<br>'
+       + '<a class="maplink" href="' + mapHref(st.last_loc) + '" target="_blank" rel="noopener">地図で見る</a>'
+       + (st.last_loc.at ? '　<span style="font-size:14px">（' + esc(st.last_loc.at) + '）</span>' : '')
+       + (st.last_loc.acc ? '<br><span style="font-size:14px">誤差はおよそ ' + esc(st.last_loc.acc) + 'm</span>' : '')
+       + '<br><span style="font-size:14px;color:#9aa5b1">※ これは<b>最後にボタンを押したときの場所</b>です。'
+       + 'いま現在いる場所ではありません。</span></div>';
+  } else if (st.track_location){
+    h += '<div class="kv" style="margin-top:10px;font-size:14px;color:#9aa5b1">'
+       + '場所はまだ記録されていません。ご本人の端末で位置情報が'
+       + '許可されていないのかもしれません。</div>';
+  }
+
+  $('famDetail').innerHTML = h + '</div>';
+}
+
+/* 数字だけを組み立てるので、そのままリンクにしても安全 */
+function mapHref(l){
+  var lat = Number(l.lat), lon = Number(l.lon);
+  if (!isFinite(lat) || !isFinite(lon)) return '#';
+  return 'https://www.google.com/maps?q=' + lat + ',' + lon;
+}
+
+// "2026-09-09T07:12:00" → "07:12"
+function stampTime(s){
+  var m = String(s || '').match(/T(\d{2}:\d{2})/);
+  return m ? m[1] : '';
+}
+// "2026-09-09T07:12:00" → "9月9日 07:12"
+function stampFull(s){
+  var m = String(s || '').match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}:\d{2})/);
+  if (!m) return String(s || '');
+  return Number(m[2]) + '月' + Number(m[3]) + '日 ' + m[4];
+}
+
+/* ④ 押した時刻のうつりかわり（14日分）
+   横が時刻（5時〜21時）、縦が日にち。点が右へずれていくときは
+   起きる時間が遅くなってきたしるし＝体調の変化の目安になります。
+   旧いPython版にあった見え方を、こちらにも戻したものです。 */
+function renderChart(rows){
+  if (!rows || !rows.length){ $('famChart').innerHTML = ''; return; }
+
+  // L＝左に空ける幅。日付の文字がはみ出して切れないよう、少し広めにとる。
+  var W = 320, L = 64, R = 10, H0 = 5, H1 = 21;
+  var rowH = 18, top = 10, bottom = 24;
+  var n = rows.length;
+  var H = top + n * rowH + bottom;
+  var wd = ['日','月','火','水','木','金','土'];
+
+  function x(h){
+    var c = Math.min(Math.max(h, H0), H1);
+    return L + (W - L - R) * (c - H0) / (H1 - H0);
+  }
+
+  var s = '<svg class="chart" viewBox="0 0 ' + W + ' ' + H + '" '
+        + 'role="img" aria-label="押した時刻のうつりかわり">';
+
+  [6,9,12,15,18,21].forEach(function(h){
+    var px = x(h).toFixed(1);
+    s += '<line x1="'+px+'" y1="'+top+'" x2="'+px+'" y2="'+(top + n*rowH)+'" '
+       + 'stroke="#e3e9ee" stroke-width="1"/>'
+       + '<text x="'+px+'" y="'+(H-8)+'" font-size="10" fill="#9aa5b1" text-anchor="middle">'+h+'時</text>';
+  });
+
+  rows.forEach(function(r, i){
+    var y = top + i * rowH + rowH / 2;
+    var p = String(r.d).split('-');
+    var lab = String(r.d);
+    if (p.length === 3){
+      lab = Number(p[1]) + '/' + Number(p[2])
+          + ' ' + wd[new Date(Number(p[0]), Number(p[1])-1, Number(p[2])).getDay()];
+    }
+    s += '<text x="'+(L-6)+'" y="'+(y+4)+'" font-size="11" fill="#5b6b7a" text-anchor="end">'
+       + esc(lab) + '</text>';
+
+    var hm = String(r.t).match(/^(\d{1,2}):(\d{2})/);
+    if (!hm) return;
+    var hh = Number(hm[1]) + Number(hm[2]) / 60;
+    var col = (r.m === 'しんどい') ? '#e07b39' : (r.m === 'ふつう' ? '#3a7bd5' : '#1f9d63');
+    var cx = x(hh);
+    s += '<circle cx="'+cx.toFixed(1)+'" cy="'+y+'" r="5" fill="'+col+'"/>';
+
+    // 時刻の文字が右にはみ出しそうなときは、点の左側に置く
+    var right = (cx + 42 <= W - R);
+    s += '<text x="'+(right ? cx + 9 : cx - 9).toFixed(1)+'" y="'+(y+4)+'" font-size="10" '
+       + 'fill="#8a97a3" text-anchor="'+(right ? 'start' : 'end')+'">' + esc(r.t) + '</text>';
+  });
+
+  s += '</svg>';
+
+  $('famChart').innerHTML = '<div class="card">'
+    + '<h2>押した時刻のうつりかわり</h2>' + s
+    + '<div class="legend">'
+    + '<span style="color:#1f9d63">●</span> 元気　'
+    + '<span style="color:#3a7bd5">●</span> ふつう　'
+    + '<span style="color:#e07b39">●</span> しんどい<br>'
+    + '点がだんだん右へずれていくときは、起きる時間が遅くなってきたしるしです。'
+    + '体調が落ちてきているサインのことがあります。</div></div>';
+}
+
+/* ⑤ 電話ボタン。番号はこの端末のなかだけに保存されます。 */
+function renderCallBtn(){
+  var t = getTel();
+  if (!t){ $('famCall').classList.add('hide'); return; }
+  $('famCall').textContent = '📞 ' + t + ' に電話する';
+  $('famCall').classList.remove('hide');
+}
+
 /* ---------- 設定画面 ---------- */
 function buildPrefSelect(){
   var sel = $('pref'), cur = getPref(), html = '';
@@ -477,10 +807,24 @@ function openSetup(){
   buildPrefSelect();
   $('url').value = getUrl();
   $('loc').checked = locOn();
+  $('tel').value = getTel();
+  var fam = (getRole() === 'family');
+  $('roleUser').checked = !fam;
+  $('roleFamily').checked = fam;
+  applyRoleUI();
   showPermState();
   refreshClearBtn();
   $('main').classList.add('hide');
+  $('family').classList.add('hide');
   $('setup').classList.remove('hide');
+}
+
+/* 選んだ使い方に合わせて、設定画面の見せる項目を切り替える。
+   ご家族の端末に、位置情報の許可や暑さの設定を出しても迷わせるだけなので隠す。 */
+function applyRoleUI(){
+  var fam = $('roleFamily').checked;
+  $('userOnly').classList.toggle('hide', fam);
+  $('familyOnly').classList.toggle('hide', !fam);
 }
 
 // いまの許可の状態を、専門用語なしで見せる
@@ -541,8 +885,16 @@ function fetchStatus(){
     });
 }
 
+/* 設定画面から「ふだんの画面」に戻るときの入口。
+   この端末の使い方によって、ご本人用とご家族用のどちらを開くかを決める。 */
+function openHome(){
+  if (getRole() === 'family') openFamily();
+  else openMain();
+}
+
 function openMain(){
   $('setup').classList.add('hide');
+  $('family').classList.add('hide');
   $('main').classList.remove('hide');
   showToday();
   refreshLocBadge();
@@ -565,6 +917,9 @@ function onBackToApp(){
 }
 
 function refreshOnReturn(){
+  // ご家族用の画面のときは、状態をとり直すだけでよい
+  if (!$('family').classList.contains('hide')){ loadFamily(); return; }
+
   if ($('main').classList.contains('hide')) return;   // 設定画面のときは何もしない
 
   var dayChanged = (shownDay !== dayKey());
@@ -586,7 +941,19 @@ document.addEventListener('DOMContentLoaded', function(){
     b.addEventListener('click', function(){ checkin(b.dataset.mood); });
   });
   $('toSetup').addEventListener('click', openSetup);
-  $('backMain').addEventListener('click', openMain);
+  $('famToSetup').addEventListener('click', openSetup);
+  $('backMain').addEventListener('click', openHome);
+
+  // ご家族用の画面のボタン
+  $('famReload').addEventListener('click', loadFamily);
+  $('famCall').addEventListener('click', function(){
+    var t = getTel();
+    if (t) location.href = 'tel:' + t;
+  });
+
+  // 使い方を切り替えたら、設定画面の中身もその場で切り替える
+  $('roleUser').addEventListener('change', applyRoleUI);
+  $('roleFamily').addEventListener('change', applyRoleUI);
 
   // アプリに戻ってきたとき（画面を消して、またつけたときも含む）
   document.addEventListener('visibilitychange', onBackToApp);
@@ -600,13 +967,25 @@ document.addEventListener('DOMContentLoaded', function(){
       $('setupMsg').textContent = 'URLの形がちがうようです。末尾が /exec になっているか確かめてください。';
       return;
     }
+    // 電話番号は、数字と記号だけを受け付ける（変な文字をリンクに混ぜないため）
+    var tel = $('tel').value.trim();
+    if (tel && !/^[0-9+\-() ]{6,20}$/.test(tel)){
+      $('setupMsg').style.color = '#b3261e';
+      $('setupMsg').textContent = '電話番号は数字で入れてください（例：09012345678）。';
+      return;
+    }
+
     localStorage.setItem(KEY_URL, u);
     localStorage.setItem(KEY_PREF, $('pref').value);
     localStorage.setItem(KEY_LOC, $('loc').checked ? '1' : '0');
+    localStorage.setItem(KEY_ROLE, $('roleFamily').checked ? 'family' : 'user');
+    if (tel) localStorage.setItem(KEY_TEL, tel);
+    else     localStorage.removeItem(KEY_TEL);
+
     $('setupMsg').style.color = '#1f9d63';
     $('setupMsg').textContent = '保存しました ✓';
     refreshClearBtn();
-    setTimeout(openMain, 500);
+    setTimeout(openHome, 500);
   });
 
   // チェックを切り替えたら、その場で保存して状態も出しなおす
@@ -652,15 +1031,21 @@ document.addEventListener('DOMContentLoaded', function(){
     localStorage.removeItem(KEY_URL);
     localStorage.removeItem(KEY_PREF);
     localStorage.removeItem(KEY_LOC);
+    localStorage.removeItem(KEY_ROLE);
+    localStorage.removeItem(KEY_TEL);
     lastPos = null;
     $('url').value = '';
+    $('tel').value = '';
     $('loc').checked = true;
+    $('roleUser').checked = true;
+    $('roleFamily').checked = false;
+    applyRoleUI();
     $('setupMsg').style.color = '#5b6b7a';
     $('setupMsg').textContent = 'この端末の設定を消しました。';
     refreshClearBtn();
   });
 
-  if (getUrl()) openMain(); else openSetup();
+  if (getUrl()) openHome(); else openSetup();
 
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('sw.js').catch(function(){});

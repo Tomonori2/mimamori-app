@@ -26,9 +26,19 @@
  *   確かめているので、テストを1回押しただけで、その日の本物のお知らせが
  *   出なくなっていました。テストの件名に【テスト】を入れ、
  *   数に入れないようにして直しています。
+ *
+ * v1.4で足したもの：ご家族用の画面のための入り口（action=family）
+ *   ご家族が、メールを待たずに「いまどうなっているか」を見られるようにします。
+ *   ★ これは【読むだけ】の入り口です。ここから合図を記録することはできません。
+ *     ご家族の端末から押せてしまうと、ご本人が押していない日でも「元気」と
+ *     記録され、お知らせが止まってしまうためです。
+ *   ★ 見張り（15分おきのトリガー）が生きているかも返します。見張りが止まると
+ *     「合図がなくてもメールが来ない」という、いちばん危ない静かな故障になるので、
+ *     ご家族の画面でいつでも確かめられるようにしました。
+ *   ※ シートの形は変わりません。「① 初期設定」を押し直す必要はありません。
  */
 
-var VERSION = 'v1.3';
+var VERSION = 'v1.4';
 
 // 体調の3択。キーと、画面やメールに出す言葉の対応表。
 var MOODS = {
@@ -183,6 +193,7 @@ function doGet(e) {
     // POSTがうまくいかない環境のための逃げ道
     return json_(checkin_(p.mood || 'genki', { lat: p.lat, lon: p.lon, acc: p.acc }));
   }
+  if (action === 'family') return json_(familyStatus_());   // ご家族用（読むだけ）
   return json_(status_());
 }
 
@@ -197,6 +208,7 @@ function doPost(e) {
     data = {};
   }
   if (data.action === 'status') return json_(status_());
+  if (data.action === 'family') return json_(familyStatus_());   // ご家族用（読むだけ）
   return json_(checkin_(data.mood || 'genki', data.loc));
 }
 
@@ -214,6 +226,83 @@ function status_() {
     checked_today: (stateDate_('last_checkin') === today),
     today_mood: getState_('today_mood'),
     history: recentRows_(7)
+  };
+}
+
+/**
+ * ご家族用の状態（v1.4）。
+ *
+ * ★ ここは【読むだけ】です。記録もメール送信も一切しません。
+ *   ご家族の端末から合図を送れてしまうと、ご本人が押していない日でも
+ *   「元気」と記録され、お知らせが止まってしまいます。
+ *
+ * ボタン画面用の status_() と分けてあるのは、
+ *   ・ご家族には、もっと厚い情報（見張りの生死・場所・14日分の記録）が要る
+ *   ・ご本人の画面には、増やしたくない
+ * という理由です。status_() は今までのまま変えていないので、
+ * 古いボタン画面のままの方がいても、今までどおり動きます。
+ */
+function familyStatus_() {
+  var s = getSettings_();
+  var now = new Date();
+  var today = ymd_(now);
+  var nowHM = Utilities.formatDate(now, tz_(), 'HH:mm');
+
+  return {
+    ok: true,
+    version: VERSION,
+    name: s.name,
+    deadline: s.deadline,
+    daily_report: s.daily_report,
+    track_location: s.track_location,
+    now: Utilities.formatDate(now, tz_(), 'yyyy-MM-dd HH:mm'),
+    // 締め切りを過ぎているか。日付と時刻でちがう時計を混ぜないよう、
+    // checkDeadline と同じ「HH:mm の文字くらべ」で判断する。
+    past_deadline: (nowHM >= s.deadline),
+    checked_today: (stateDate_('last_checkin') === today),
+    today_mood: getState_('today_mood'),
+    last_checkin: getState_('last_checkin'),
+    alerted_today: (stateDate_('alert_date') === today),
+    cleared_today: (stateDate_('clear_date') === today),
+    watching: watching_(),
+    last_loc: lastLocInfo_(s),
+    history: recentRows_(14)
+  };
+}
+
+/**
+ * 15分おきの見張りが仕掛けられているかを確かめる。
+ * 見張りが止まると「合図がなくてもメールが来ない」という、
+ * 外からは元気に見えるのに中身が死んでいる状態になります。
+ * これを黙って起こさないための確認です。
+ *
+ * ※ ここで使う ScriptApp は setup() でも使っているので、
+ *   すでにお使いの方に新しい許可を求めることはありません。
+ * ※ 何かの理由で調べられなかったときは、false（止まっている）ではなく
+ *   null（分からない）を返します。うその警告を出さないためです。
+ */
+function watching_() {
+  try {
+    var ts = ScriptApp.getProjectTriggers();
+    for (var i = 0; i < ts.length; i++) {
+      if (ts[i].getHandlerFunction() === 'checkDeadline') return true;
+    }
+    return false;
+  } catch (err) {
+    return null;
+  }
+}
+
+/** 最後に合図があったときの場所。地図のリンクまで作って返す。 */
+function lastLocInfo_(s) {
+  if (!s.track_location) return null;
+  var raw = String(getState_('last_loc') || '').split(',');
+  var loc = cleanLoc_({ lat: raw[0], lon: raw[1], acc: raw[2] });
+  if (!loc) return null;
+  return {
+    lat: loc.lat, lon: loc.lon, acc: loc.acc,
+    at: String(getState_('last_loc_at') || ''),
+    map: mapUrl_(loc)
   };
 }
 
