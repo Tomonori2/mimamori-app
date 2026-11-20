@@ -36,9 +36,19 @@
  *     「合図がなくてもメールが来ない」という、いちばん危ない静かな故障になるので、
  *     ご家族の画面でいつでも確かめられるようにしました。
  *   ※ シートの形は変わりません。「① 初期設定」を押し直す必要はありません。
+ *
+ * v1.5で直したもの：合言葉（2026-11-21 の安全点検で見つかった弱点）
+ *   今までは、このウェブアプリのURLを知っている人なら誰でも
+ *   「元気です」を記録できました（→ 本当に倒れていてもお知らせが止まる）。
+ *   お名前・最後の場所・毎日の記録も読めました。
+ *   いまは、スマホが送ってくる「合言葉」が合うときだけ答えます。
+ *     ・ご本人の合言葉 … 押す・状態を見る、の両方ができる
+ *     ・ご家族の合言葉 … 見るだけ（押すことはできない）
+ *   合言葉は「設定」シートに自動で作られます。
+ *   メニュー「⑤ スマホに入れる合言葉を見る」で確かめて、各スマホの設定画面に入れてください。
  */
 
-var VERSION = 'v1.4';
+var VERSION = 'v1.5';
 
 // 体調の3択。キーと、画面やメールに出す言葉の対応表。
 var MOODS = {
@@ -63,7 +73,63 @@ function onOpen() {
     .addItem('② テスト通知を送ってみる', 'testAlert')
     .addItem('③ いまの状態を見る', 'showStatus')
     .addItem('④ きょうの記録をリセット（テスト用）', 'resetToday')
+    .addItem('⑤ スマホに入れる合言葉を見る', 'showKeys')
     .addToUi();
+}
+
+/* ============================================================
+   合言葉（v1.5）
+   ============================================================ */
+var KEY_USER_LABEL   = '合言葉（ご本人のスマホ用）';
+var KEY_FAMILY_LABEL = '合言葉（ご家族のスマホ用・見るだけ）';
+
+/** 推測されにくい16文字の合言葉を作る（Googleの乱数＝UUIDを使う。Math.randomは使わない） */
+function newKey_() {
+  return Utilities.getUuid().replace(/-/g, '').slice(0, 16);
+}
+
+/** 入力のゆれをそろえる（大文字・空白・ハイフンを無視） */
+function normKey_(k) {
+  return String(k || '').toLowerCase().replace(/[\s\-ー－]/g, '');
+}
+
+/** 合言葉を読む。まだ無ければ「設定」シートの下に作って書き足す。 */
+function getKeys_() {
+  var st = sheet_(SHEET_SETTINGS);
+  var last = st.getLastRow();
+  var rows = last ? st.getRange(1, 1, last, 2).getValues() : [];
+  var v = {};
+  rows.forEach(function (r) { v[String(r[0]).trim()] = normKey_(r[1]); });
+  var need = [];
+  if (!v[KEY_USER_LABEL])   { v[KEY_USER_LABEL]   = newKey_(); need.push([KEY_USER_LABEL,   v[KEY_USER_LABEL]]); }
+  if (!v[KEY_FAMILY_LABEL]) { v[KEY_FAMILY_LABEL] = newKey_(); need.push([KEY_FAMILY_LABEL, v[KEY_FAMILY_LABEL]]); }
+  if (need.length) {
+    var lock = LockService.getScriptLock();
+    lock.waitLock(10000);
+    try { need.forEach(function (r) { st.appendRow(r); }); } finally { lock.releaseLock(); }
+  }
+  return { user: v[KEY_USER_LABEL], family: v[KEY_FAMILY_LABEL] };
+}
+
+/** 送られてきた合言葉が、だれのものかを返す（'user' / 'family' / ''） */
+function whoIs_(k) {
+  var n = normKey_(k);
+  if (!n) return '';
+  var keys = getKeys_();
+  if (n === keys.user) return 'user';
+  if (n === keys.family) return 'family';
+  return '';
+}
+
+function showKeys() {
+  var keys = getKeys_();
+  SpreadsheetApp.getUi().alert(
+    'スマホの「みまもり」の設定画面に、次の合言葉を入れてください。\n\n'
+    + '■ ご本人のスマホ（ボタンを押す方）\n　' + keys.user + '\n\n'
+    + '■ ご家族のスマホ（見るだけ）\n　' + keys.family + '\n\n'
+    + '※ 合言葉は人に教えないでください。\n'
+    + '　漏れたかもと思ったら「設定」シートのその行の値を消すと、\n'
+    + '　次に使われたときに新しい合言葉が自動で作られます（各スマホに入れ直してください）。');
 }
 
 /** テスト用。「まだ何も押していない」状態に戻す。
@@ -121,11 +187,14 @@ function setup() {
       + '（みまもり ' + VERSION + ' からの自動送信）\n'
   );
 
+  getKeys_();   // 合言葉を作っておく（v1.5）
+
   ui.alert('初期設定が終わりました。\n\n'
          + '・15分おきに「合図があったか」を見張ります\n'
          + '・連絡先（' + s.contact_email + '）に開始のお知らせを送りました\n\n'
          + '次は「デプロイ」→「新しいデプロイ」でウェブアプリとして公開し、\n'
-         + '出てきたURLをボタン画面の設定に貼り付けてください。');
+         + '出てきたURLと、メニュー「⑤ スマホに入れる合言葉を見る」の合言葉を\n'
+         + 'ボタン画面の設定に入れてください。');
 }
 
 
@@ -186,11 +255,19 @@ function alertSentToday_(today) {
    ============================================================ */
 
 // 状態を返す（画面を開いたとき）
+// v1.5：合言葉が合わないときは、何も記録せず、何も教えない。
+//   ご本人の合言葉 … 押す・状態を見る
+//   ご家族の合言葉 … 見るだけ（押すことはできない）
+var NG_ = { ok: false, err: 'auth' };
+
 function doGet(e) {
   var p = (e && e.parameter) || {};
   var action = p.action || 'status';
+  var who = whoIs_(p.k);
+  if (!who) return json_(NG_);
   if (action === 'checkin') {
     // POSTがうまくいかない環境のための逃げ道
+    if (who !== 'user') return json_(NG_);
     return json_(checkin_(p.mood || 'genki', { lat: p.lat, lon: p.lon, acc: p.acc }));
   }
   if (action === 'family') return json_(familyStatus_());   // ご家族用（読むだけ）
@@ -207,8 +284,11 @@ function doPost(e) {
   } catch (err) {
     data = {};
   }
+  var who = whoIs_(data.k);
+  if (!who) return json_(NG_);
   if (data.action === 'status') return json_(status_());
   if (data.action === 'family') return json_(familyStatus_());   // ご家族用（読むだけ）
+  if (who !== 'user') return json_(NG_);                         // ご家族の合言葉では押せない
   return json_(checkin_(data.mood || 'genki', data.loc));
 }
 

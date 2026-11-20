@@ -2,6 +2,8 @@
 <html lang="ja">
 <head>
 <meta charset="utf-8">
+<!-- CSP＝このページが話してよい相手の名簿（2026-11-21 安全点検で追加）。通信先を足すときは connect-src にも足す -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://script.google.com https://script.googleusercontent.com https://api.open-meteo.com; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>みまもり</title>
 <link rel="manifest" href="manifest.json">
@@ -189,6 +191,15 @@
     <input id="url" type="url" placeholder="https://script.google.com/macros/s/.../exec"
            autocomplete="off" spellcheck="false">
 
+    <label for="key" style="margin-top:18px">合言葉（16文字）</label>
+    <input id="key" type="text" placeholder="例：1a2b3c4d5e6f7a8b"
+           autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="40">
+    <div class="note" style="margin-top:6px">
+      スプレッドシートの上のメニュー「みまもり」→「⑤ スマホに入れる合言葉を見る」に出ます。<br>
+      ご本人のスマホには<b>ご本人用</b>、ご家族のスマホには<b>ご家族用（見るだけ）</b>を入れてください。
+      URLを知られても、合言葉がなければ記録も読み取りもできません。
+    </div>
+
     <label style="margin-top:24px">この端末の使い方</label>
     <label class="check" for="roleUser">
       <input type="radio" name="role" id="roleUser" value="user">ご本人が使う（大きなボタンを出す）
@@ -294,8 +305,9 @@
 //     （家族の端末から押せると、ご本人が押していない日でも「元気」と
 //       記録され、お知らせが止まってしまう）
 // ============================================================
-var VERSION = 'v1.4.2';
+var VERSION = 'v1.5.0';
 var KEY_URL = 'mimamori_url';
+var KEY_KEY = 'mimamori_key';   // 合言葉（v1.5）。URLだけでは記録も読み取りもできないようにする
 var KEY_PREF = 'mimamori_pref';
 var KEY_LOC = 'mimamori_loc';   // 場所を送るかどうか（'1' 送る / '0' 送らない）
 var KEY_ROLE = 'mimamori_role'; // この端末の使い方（'user' 本人 / 'family' 家族）
@@ -326,6 +338,9 @@ var MOOD_LABEL = { genki:'元気', futsu:'ふつう', shindoi:'しんどい' };
 
 function $(id){ return document.getElementById(id); }
 function getUrl(){ return localStorage.getItem(KEY_URL) || ''; }
+function getKey(){ return localStorage.getItem(KEY_KEY) || ''; }
+// 入力のゆれをそろえる（GAS側の normKey_ と同じ）
+function normKey(k){ return String(k || '').toLowerCase().replace(/[\s\-ー－]/g, ''); }
 function getPref(){ return localStorage.getItem(KEY_PREF) || '愛知県'; }
 function getRole(){ return localStorage.getItem(KEY_ROLE) === 'family' ? 'family' : 'user'; }
 function getTel(){ return localStorage.getItem(KEY_TEL) || ''; }
@@ -417,6 +432,20 @@ function warmPos(){
 function callGas(payload){
   var url = getUrl();
   if (!url) return Promise.reject(new Error('URLが設定されていません'));
+  // 合言葉が空でも送る。Google側が古い版（v1.4以前）のうちは合言葉なしで動くので、
+  // 先にこの画面を更新しても、ご本人が押せなくなることはない（Google側を更新したら合言葉が必要になる）。
+  if (getKey()) payload.k = getKey();
+
+  // 合言葉ちがいは、投げ直しても同じなので、分かる言葉にして止める
+  function checkAuth(js){
+    if (js && js.err === 'auth') {
+      var e = new Error(getKey() ? '合言葉がちがいます。設定画面で入れ直してください'
+                                 : '合言葉が設定されていません。設定画面で入れてください');
+      e.auth = true;
+      throw e;
+    }
+    return js;
+  }
 
   return fetch(url, {
     method: 'POST',
@@ -425,9 +454,12 @@ function callGas(payload){
     redirect: 'follow'
   })
   .then(function(r){ if(!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
-  .catch(function(){
+  .then(checkAuth)
+  .catch(function(err){
+    if (err && err.auth) throw err;
     // 逃げ道：GETで投げ直す
-    var q = url + (url.indexOf('?') >= 0 ? '&' : '?') + 'action=' + encodeURIComponent(payload.action || 'status');
+    var q = url + (url.indexOf('?') >= 0 ? '&' : '?') + 'action=' + encodeURIComponent(payload.action || 'status')
+          + (payload.k ? '&k=' + encodeURIComponent(payload.k) : '');
     if (payload.mood) q += '&mood=' + encodeURIComponent(payload.mood);
     if (payload.loc) {
       q += '&lat=' + encodeURIComponent(payload.loc.lat)
@@ -437,7 +469,7 @@ function callGas(payload){
     return fetch(q, { redirect:'follow' }).then(function(r){
       if(!r.ok) throw new Error('HTTP ' + r.status);
       return r.json();
-    });
+    }).then(checkAuth);
   });
 }
 
@@ -812,6 +844,7 @@ function buildPrefSelect(){
 function openSetup(){
   buildPrefSelect();
   $('url').value = getUrl();
+  $('key').value = getKey();
   $('loc').checked = locOn();
   $('tel').value = getTel();
   var fam = (getRole() === 'family');
@@ -973,6 +1006,13 @@ document.addEventListener('DOMContentLoaded', function(){
       $('setupMsg').textContent = 'URLの形がちがうようです。末尾が /exec になっているか確かめてください。';
       return;
     }
+    // 空のままでも保存はできる（Google側を v1.5 にするまでは不要なため）。入れたときは形を確かめる
+    var key = normKey($('key').value);
+    if (key && !/^[0-9a-f]{16}$/.test(key)){
+      $('setupMsg').style.color = '#b3261e';
+      $('setupMsg').textContent = '合言葉は16文字（数字と a〜f）です。スプレッドシートの「⑤ 合言葉を見る」で確かめてください。';
+      return;
+    }
     // 電話番号は、数字と記号だけを受け付ける（変な文字をリンクに混ぜないため）
     var tel = $('tel').value.trim();
     if (tel && !/^[0-9+\-() ]{6,20}$/.test(tel)){
@@ -982,6 +1022,8 @@ document.addEventListener('DOMContentLoaded', function(){
     }
 
     localStorage.setItem(KEY_URL, u);
+    if (key) localStorage.setItem(KEY_KEY, key);
+    else     localStorage.removeItem(KEY_KEY);
     localStorage.setItem(KEY_PREF, $('pref').value);
     localStorage.setItem(KEY_LOC, $('loc').checked ? '1' : '0');
     localStorage.setItem(KEY_ROLE, $('roleFamily').checked ? 'family' : 'user');
@@ -1035,6 +1077,8 @@ document.addEventListener('DOMContentLoaded', function(){
                + 'この端末からは「元気です」を押せなくなります。\n\n'
                + '消してよろしいですか？')) return;
     localStorage.removeItem(KEY_URL);
+    localStorage.removeItem(KEY_KEY);
+    $('key').value = '';
     localStorage.removeItem(KEY_PREF);
     localStorage.removeItem(KEY_LOC);
     localStorage.removeItem(KEY_ROLE);
